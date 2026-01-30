@@ -55,7 +55,10 @@
 #include <ap_int.h>
 #include <hls_vector.h>
 #include <hls_stream.h>
-
+#include <utils/hls_version.h>
+#if XILINX_HLS_VERSION_RELEASE >= 20242
+#  include <ap_float.h>
+#endif
 
 //- Compile-Time Functions --------------------------------------------------
 
@@ -120,6 +123,20 @@ void logStringStream(const char *layer_name, hls::stream<ap_uint<BitWidth> > &lo
 
 //- Type Traits -------------------------------------------------------------
 
+template<typename T>
+struct is_ap_float : std::false_type {};
+
+#ifdef __AP_FLOAT_H__
+template<int W, int I>
+struct is_ap_float<ap_float<W,I>> : std::true_type {};
+#endif
+
+template<typename T>
+struct is_floating_point_or_ap_float
+    : std::integral_constant<bool, std::is_floating_point<T>::value || is_ap_float<T>::value> {};
+
+//- Custom std::numeric_limits<ap_(u)int<W>> for releases prior to 2025.2.
+#if XILINX_HLS_VERSION_RELEASE < 20252
 template<int  W>
 class std::numeric_limits<ap_uint<W>> : public std::numeric_limits<void> {
 public:
@@ -146,12 +163,25 @@ public:
 	static constexpr bool  is_exact = true;
 	static constexpr bool  is_bounded = true;
 	static constexpr bool  is_modulo = true;
-	static constexpr unsigned  digits = W;
+	static constexpr unsigned  digits = W-1;
 	static constexpr unsigned  radix  = 2;
 
 	static ap_int<W> min   () { ap_int<W>  res = 0; res[W - 1] = 1; return  res; }
 	static ap_int<W> lowest() { ap_int<W>  res = 0; res[W - 1] = 1; return  res; }
 	static ap_int<W> max   () { ap_int<W>  res = 0; res[W - 1] = 1; return ~res; }
+};
+#endif
+
+//- Streaming Flit with `last` Marking --------------------------------------
+template<typename T>
+struct flit_t {
+	bool  last;
+	T     data;
+
+public:
+	flit_t() {}
+	flit_t(bool  last_, T const &data_) : last(last_), data(data_) {}
+	~flit_t() {}
 };
 
 //- Zero-Width-Enabled Arbitrary-Precision Numbers ..........................
@@ -209,6 +239,35 @@ inline std::ostream& operator<<(std::ostream &o, hls::vector<T, N> const &v) {
 		delim = ':';
 	}
 	return (o << '}');
+}
+
+//- Streaming Copy ----------------------------------------------------------
+template<typename T>
+void move(hls::stream<T> &src, hls::stream<T> &dst) {
+#pragma HLS pipeline II=1 style=flp
+	if(!src.empty())  dst.write(src.read());
+}
+
+//- Tree Reduce -------------------------------------------------------------
+template<
+	size_t    N,
+	typename  TA,
+	typename  TR = TA,	// must be assignable from TA
+	typename  F			// (TR, TR) -> TR
+>
+TR tree_reduce(hls::vector<TA, N> const &v, F &&f = F()) {
+#pragma HLS inline
+	TR  tree[2*N-1];
+#pragma HLS array_partition complete dim=1 variable=tree
+	for(unsigned  i = N; i-- > 0;) {
+#pragma HLS unroll
+		tree[N-1 + i] = v[i];
+	}
+	for(unsigned  i = N-1; i-- > 0;) {
+#pragma HLS unroll
+		tree[i] = f(tree[2*i+1], tree[2*i+2]);
+	}
+	return  tree[0];
 }
 
 //- Modulus Counter ---------------------------------------------------------
