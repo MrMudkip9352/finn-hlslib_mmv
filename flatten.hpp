@@ -64,31 +64,39 @@ ap_uint<W> to_bitimage(ap_uint<W> const &val) {
 }
 
 #ifdef __AP_FIXED_H__
-template <int  W, int  I, ap_q_mode  Q, ap_o_mode  O, int  N>
+template<int  W, int  I, ap_q_mode  Q, ap_o_mode  O, int  N>
 ap_uint<W> to_bitimage(ap_fixed<W, I, Q, O, N> const &val) {
+#pragma HLS inline
+	return  val(W-1, 0);
+}
+template<int  W, int  I, ap_q_mode  Q, ap_o_mode  O, int  N>
+ap_uint<W> to_bitimage(ap_ufixed<W, I, Q, O, N> const &val) {
 #pragma HLS inline
 	return  val(W-1, 0);
 }
 #endif
 
 #ifdef __AP_FLOAT_H__
-template<int W, int E>
+template<int  W, int  E>
 ap_uint<W> to_bitimage(ap_float<W, E> const &val) {
 	return (ap_uint<1>(val.sign_ref()), val.exponent_ref(), val.mantissa_ref());
 }
 #endif
 
 // Floating-point Specializations
+inline
 ap_uint<16> to_bitimage(half const &val) {
 #pragma HLS inline
 	union { uint16_t  i; half  f; } const  conv = { .f = val };
 	return  to_bitimage(conv.i);
 }
+inline
 ap_uint<32> to_bitimage(float const &val) {
 #pragma HLS inline
 	union { uint32_t  i; float  f; } const  conv = { .f = val };
 	return  to_bitimage(conv.i);
 }
+inline
 ap_uint<64> to_bitimage(double const &val) {
 #pragma HLS inline
 	union { uint64_t  i; double  f; } const  conv = { .f = val };
@@ -123,6 +131,37 @@ struct BitImage<ap_int<W>> {
 		return  bits;
 	}
 };
+
+#ifdef __AP_FIXED_H__
+template<int  W, int  I, ap_q_mode  Q, ap_o_mode  O, int  N>
+struct BitImage<ap_fixed<W, I, Q, O, N>> {
+	static ap_fixed<W, I, Q, O, N> from(ap_uint<W> const &bits) {
+#pragma HLS inline
+		ap_fixed<W, I, Q, O, N>  result;
+		result(W-1, 0) = bits;
+		return  result;
+	}
+};
+template<int  W, int  I, ap_q_mode  Q, ap_o_mode  O, int  N>
+struct BitImage<ap_ufixed<W, I, Q, O, N>> {
+	static ap_ufixed<W, I, Q, O, N> from(ap_uint<W> const &bits) {
+#pragma HLS inline
+		ap_ufixed<W, I, Q, O, N>  result;
+		result(W-1, 0) = bits;
+		return  result;
+	}
+};
+#endif
+
+#ifdef __AP_FLOAT_H__
+template<int  W, int  E>
+struct BitImage<ap_float<W, E>> {
+	static ap_float<W, E> from(ap_uint<W> const &bits) {
+		constexpr int  M = W - E;
+		return  ap_float<W, E>(bits[W-1], bits(W-2, M-1), bits(M-2, 0));
+	}
+};
+#endif
 
 // Floating-point Specializations
 template<>
